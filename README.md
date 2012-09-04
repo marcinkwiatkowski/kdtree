@@ -5,7 +5,7 @@ This library was inspired by both the [Wikipedia K-d Tree article](http://en.wik
 and the [Haskell KdTree package](http://hackage.haskell.org/package/KdTree).
 
 It implements a k-dimensional B-tree with float64 coordinates in Go. K-dimensional trees are a reasonably efficient
-way of search K-dimensional space for matching items by using bisecting planes at each binary tree branch.
+way of searching K-dimensional space for matching items by using bisecting planes at each binary tree branch.
 The Wikipedia article explains this concept in greater detail.
 
 This library implements most (all?) basic functionality you would expect to be available from such a
