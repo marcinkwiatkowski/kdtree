@@ -51,9 +51,7 @@ func (snl *SortableNodeList) Less(i, j int) bool {
 }
 
 func (snl *SortableNodeList) Swap(i, j int) {
-	tmp := snl.Nodes[i]
-	snl.Nodes[i] = snl.Nodes[j]
-	snl.Nodes[j] = tmp
+	snl.Nodes[i], snl.Nodes[j] = snl.Nodes[j], snl.Nodes[i]
 }
 
 // Builds a tree from a list of nodes. Returns the root Node of the new tree.
