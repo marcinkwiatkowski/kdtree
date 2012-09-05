@@ -37,6 +37,8 @@ than other operations:
 	BenchmarkAddNodes        2000000      1040 ns/op
 	BenchmarkRemoveNodes      200000     18795 ns/op
 
+The library is currently not thread / goroutine safe. Work on this is being tracked via
+[GitHub issue #2](https://github.com/unit3/kdtree/issues/2).
 
 License
 -------
