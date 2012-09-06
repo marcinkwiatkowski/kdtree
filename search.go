@@ -15,30 +15,34 @@
 
 package kdtree
 
+import (
+	"errors"
+)
+
 /***** Tree Search Functions *****/
 
-// Searches tree for node at exact coords. Returns nil if no node matching coords found,
-// or if len(coords) != tree dimensions.
-func (n *Node) Find(coords []float64) *Node {
+// Searches tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
+// or (nil, error) if len(coords) != tree dimensions.
+func (n *Node) Find(coords []float64) (*Node, error) {
 	if len(coords) != len(n.Coordinates) {
-		return nil
+		return nil, errors.New("Search coordinates have " + string(len(coords)) + " dimensions, tree has " + string(len(n.Coordinates)) + " dimensions.")
 	}
 
 	axis := n.axis
 	if coords[axis] < n.Coordinates[axis] {
 		if n.leftChild == nil {
-			return nil
+			return nil, nil
 		} else {
 			return n.leftChild.Find(coords)
 		}
 	} else if coords[axis] == n.Coordinates[axis] {
-		if equal(coords, n.Coordinates) {
-			return n
+		if equal_fl(coords, n.Coordinates) {
+			return n, nil
 		}
 	}
 	// implicit else
 	if n.rightChild == nil {
-		return nil
+		return nil, nil
 	}
 	// implicit else
 	return n.rightChild.Find(coords)
@@ -54,21 +58,64 @@ func (n *Node) Root() *Node {
 
 // Range parameter, used to search the k-d tree.
 type Range struct {
-	Axis int
-	Min  float64
-	Max  float64
+	Min float64
+	Max float64
 }
 
-// Find a list of nodes matching the supplied list of dimensional
-// Ranges. Ranges are considered to be required, so if two exclude each other,
-// this will result in an empty result set. If an axis outside of the tree's
-// dimensions is specified, nil is returned.
-//func (n *Node) GetRange([]Range) []*Node {
+// Find a list of nodes matching the supplied map of dimensional
+// Ranges. The map index is used as the axis to restrict. 
+// Use math.Inf() to create remove the restriction on Min or Max.
+//
+// If no results are found, (nil, nil) is returned.
+// If an axis outside of the tree's dimensions is specified, nil is returned with an error.
+func (n *Node) FindRange(ranges map[int]Range) ([]*Node, error) {
+	if n == nil {
+		return nil, nil
+	}
 
-//}
+	result := make([]*Node, 0, 10)
+	// check to see if the current node should be returned
+	add := true
+	for a, r := range ranges {
+		if a >= len(n.Coordinates) {
+			return nil, errors.New("Range on axis " + string(a) + " exceeds tree dimensions.")
+		}
+		if a < 0 {
+			return nil, errors.New("Negative axes are invalid.")
+		}
+
+		if n.Coordinates[a] < r.Min || n.Coordinates[a] > r.Max {
+			add = false
+			break
+		}
+	}
+	if add {
+		result = append(result, n)
+	}
+
+	// search subtrees
+	r, ok := ranges[n.axis]
+	// search subtree if we're not restricting this axis, or if restrictions match.
+	if !ok || r.Min < n.Coordinates[n.axis] {
+		if left, err := n.leftChild.FindRange(ranges); err == nil {
+			result = append(result, left...)
+		} else {
+			return result, err
+		}
+	}
+	if !ok || r.Max >= n.Coordinates[n.axis] {
+		if right, err := n.rightChild.FindRange(ranges); err == nil {
+			result = append(result, right...)
+		} else {
+			return result, err
+		}
+	}
+
+	return result, nil
+}
 
 // Tests equality of float slices, returns false if lengths or any values contained within differ.
-func equal(a, b []float64) bool {
+func equal_fl(a, b []float64) bool {
 	if len(a) != len(b) {
 		return false
 	}

@@ -49,6 +49,7 @@ func genlist(dimensions, size int) []*Node {
 
 // Generates a list of random nodes, then inserts them into a k-d tree using BuildTree.
 // Test fails if any nodes from the list are missing from the tree.
+// This test also implicitely tests Node.Find().
 func TestBuildTree(t *testing.T) {
 	// test size: 6 dimensions == 2 * normal 3d, 100000 nodes == "5 9s" of accuracy.
 	nl := genlist(6, 100000)
@@ -60,11 +61,12 @@ func TestBuildTree(t *testing.T) {
 		t.Fatal("Tree is not valid: " + err.Error())
 	}
 	for k, n := range nl {
-		search := tree.Find(n.Coordinates)
-		if search == nil {
+		if search, err := tree.Find(n.Coordinates); err == nil && search == nil {
 			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
 		} else if search != n {
 			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+		} else if err != nil {
+			t.Fatal("Error while searching tree:", err)
 		}
 	}
 }
@@ -94,8 +96,8 @@ func TestFindRoot(t *testing.T) {
 func TestAddNodes(t *testing.T) {
 	nl := genlist(6, 100000)
 	tree := BuildTree(nl, 0, nil)
-	// insert 100 nodes
-	for i := 0; i < 100; i++ {
+	// insert 1000 nodes
+	for i := 0; i < 1000; i++ {
 		n := NewNode(rndCoords(6))
 		nl = append(nl, n)
 		err := tree.Add(n)
@@ -108,11 +110,12 @@ func TestAddNodes(t *testing.T) {
 	}
 	// compare nodes against list
 	for k, n := range nl {
-		search := tree.Find(n.Coordinates)
-		if search == nil {
+		if search, err := tree.Find(n.Coordinates); err == nil && search == nil {
 			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
 		} else if search != n {
 			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+		} else if err != nil {
+			t.Fatal("Error while searching tree:", err)
 		}
 	}
 }
@@ -129,10 +132,13 @@ func BenchmarkFind(b *testing.B) {
 	nl := genlist(6, b.N)
 	tree := BuildTree(nl, 0, nil)
 	b.StartTimer()
-	for _, n := range nl {
-		found := tree.Find(n.Coordinates)
-		if found == nil || found != n {
-			b.Fatal("Didn't find correct node.")
+	for k, n := range nl {
+		if search, err := tree.Find(n.Coordinates); err == nil && search == nil {
+			b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
+		} else if search != n {
+			b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+		} else if err != nil {
+			b.Fatal("Error while searching tree:", err)
 		}
 	}
 }
@@ -144,19 +150,21 @@ func TestAddSubtree(t *testing.T) {
 	tree2 := BuildTree(nl2, 0, nil)
 	tree1.Add(tree2)
 	for k, n := range nl1 {
-		search := tree1.Find(n.Coordinates)
-		if search == nil {
-			t.Fatal(strconv.FormatInt(int64(k), 10) + "/tree1: " + n.String() + " not found!")
+		if search, err := tree1.Find(n.Coordinates); err == nil && search == nil {
+			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
 		} else if search != n {
-			t.Fatal(strconv.FormatInt(int64(k), 10) + "/tree1: " + n.String() + ", found " + search.String())
+			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+		} else if err != nil {
+			t.Fatal("Error while searching tree:", err)
 		}
 	}
 	for k, n := range nl2 {
-		search := tree1.Find(n.Coordinates)
-		if search == nil {
-			t.Fatal(strconv.FormatInt(int64(k), 10) + "/tree2: " + n.String() + " not found!")
+		if search, err := tree1.Find(n.Coordinates); err == nil && search == nil {
+			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
 		} else if search != n {
-			t.Fatal(strconv.FormatInt(int64(k), 10) + "/tree2: " + n.String() + ", found " + search.String())
+			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+		} else if err != nil {
+			t.Fatal("Error while searching tree:", err)
 		}
 	}
 }
@@ -189,7 +197,7 @@ func TestRemoveNodes(t *testing.T) {
 	// compare nodes against shortened list
 	for k := 0; k < len(nl)-500; k++ {
 		n := nl[k]
-		search := tree.Find(n.Coordinates)
+		search, _ := tree.Find(n.Coordinates)
 		if search == nil {
 			t.Error(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
 			if n.parent != nil {
@@ -255,4 +263,64 @@ func BenchmarkBalance(b *testing.B) {
 	b.StartTimer()
 
 	tree.Balance()
+}
+
+func TestFindRange(t *testing.T) {
+	nl := genlist(6, 100000)
+	tree := BuildTree(nl, 0, nil)
+
+	for i := 0; i < 100; i++ {
+		ranges := make(map[int]Range)
+		for axis := rand.Intn(6); len(ranges) < rand.Intn(6)+1; axis = rand.Intn(6) {
+			r := Range{rand.Float64(), rand.Float64()}
+			if r.Min > r.Max {
+				r.Min, r.Max = r.Max, r.Min
+			}
+			ranges[axis] = r
+		}
+		results1, err := tree.FindRange(ranges)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snl := SortableNodeList{0, nl}
+		results2, err := snl.findrange(ranges)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(results1) != len(results2) {
+			t.Fatal("Tree FindRange returned", len(results1), "nodes, list findrange returned", len(results2))
+		}
+		for _, n := range results1 {
+			if _, ok := find_nl(results2, n); !ok {
+				t.Fatal("Node from tree results not found in results list:", n)
+			}
+		}
+		for _, n := range results2 {
+			if _, ok := find_nl(results1, n); !ok {
+				t.Fatal("Node from results list not found in tree results:", n)
+			}
+		}
+	}
+}
+
+func BenchmarkFindRange(b *testing.B) {
+	b.StopTimer()
+	nl := genlist(6, b.N*2)
+	tree := BuildTree(nl, 0, nil)
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		ranges := make(map[int]Range)
+		for axis := rand.Intn(6); len(ranges) < 2; axis = rand.Intn(6) {
+			r := Range{rand.Float64(), rand.Float64()}
+			if r.Min > r.Max {
+				r.Min, r.Max = r.Max, r.Min
+			}
+			ranges[axis] = r
+		}
+		if _, err := tree.FindRange(ranges); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

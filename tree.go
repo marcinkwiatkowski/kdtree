@@ -23,37 +23,6 @@ import (
 
 /***** Tree Management Functions *****/
 
-// Returns a slice of all distinct nodes in the tree. This is done by a tree traversal,
-// and will be equally as slow.
-func (n *Node) NodeList() []*Node {
-	nodelist := make([]*Node, 0, 100)
-	f := func(n *Node) {
-		nodelist = append(nodelist, n)
-	}
-	n.Traverse(f)
-
-	return nodelist
-}
-
-// Wrapper for a slice of nodes implementing sort.Interface for different dimensional axes.
-type SortableNodeList struct {
-	// dimension axis to sort on
-	Axis  int
-	Nodes []*Node
-}
-
-func (snl *SortableNodeList) Len() int {
-	return len(snl.Nodes)
-}
-
-func (snl *SortableNodeList) Less(i, j int) bool {
-	return snl.Nodes[i].Coordinates[snl.Axis] < snl.Nodes[j].Coordinates[snl.Axis]
-}
-
-func (snl *SortableNodeList) Swap(i, j int) {
-	snl.Nodes[i], snl.Nodes[j] = snl.Nodes[j], snl.Nodes[i]
-}
-
 // Builds a tree from a list of nodes. Returns the root Node of the new tree.
 // This is destructive, and will break any existing tree these nodes may be a member of.
 // This is intended to be used to build an new tree, or as part of a tree Balance.
