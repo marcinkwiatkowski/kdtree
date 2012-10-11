@@ -21,9 +21,17 @@ import (
 
 /***** Tree Search Functions *****/
 
-// Searches tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
+// Searches Tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
 // or (nil, error) if len(coords) != tree dimensions.
-func (n *Node) Find(coords []float64) (*Node, error) {
+func (t *Tree) Find(coords []float64) (*Node, error) {
+	t.Mutex.RLock()
+	defer t.Mutex.RUnlock()
+	return t.Root.find(coords)
+}
+
+// Searches (sub)tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
+// or (nil, error) if len(coords) != tree dimensions.
+func (n *Node) find(coords []float64) (*Node, error) {
 	if len(coords) != len(n.Coordinates) {
 		return nil, errors.New("Search coordinates have " + string(len(coords)) + " dimensions, tree has " + string(len(n.Coordinates)) + " dimensions.")
 	}
@@ -33,7 +41,7 @@ func (n *Node) Find(coords []float64) (*Node, error) {
 		if n.leftChild == nil {
 			return nil, nil
 		} else {
-			return n.leftChild.Find(coords)
+			return n.leftChild.find(coords)
 		}
 	} else if coords[axis] == n.Coordinates[axis] {
 		if equal_fl(coords, n.Coordinates) {
@@ -45,15 +53,15 @@ func (n *Node) Find(coords []float64) (*Node, error) {
 		return nil, nil
 	}
 	// implicit else
-	return n.rightChild.Find(coords)
+	return n.rightChild.find(coords)
 }
 
 // Finds the root of the tree from an arbitrary node.
-func (n *Node) Root() *Node {
+func (n *Node) root() *Node {
 	if n.parent == nil {
 		return n
 	}
-	return n.parent.Root()
+	return n.parent.root()
 }
 
 // Range parameter, used to search the k-d tree.
@@ -62,13 +70,25 @@ type Range struct {
 	Max float64
 }
 
+// Find a list of Nodes in Tree matching the supplied map of dimensional
+// Ranges. The map index is used as the axis to restrict. 
+// Use math.Inf() to create remove the restriction on Min or Max.
+//
+// If no results are found, (nil, nil) is returned.
+// If an axis outside of the tree's dimensions is specified, nil is returned with an error.
+func (t *Tree) FindRange(ranges map[int]Range) ([]*Node, error) {
+	t.Mutex.RLock()
+	defer t.Mutex.RUnlock()
+	return t.Root.findRange(ranges)
+}
+
 // Find a list of nodes matching the supplied map of dimensional
 // Ranges. The map index is used as the axis to restrict. 
 // Use math.Inf() to create remove the restriction on Min or Max.
 //
 // If no results are found, (nil, nil) is returned.
 // If an axis outside of the tree's dimensions is specified, nil is returned with an error.
-func (n *Node) FindRange(ranges map[int]Range) ([]*Node, error) {
+func (n *Node) findRange(ranges map[int]Range) ([]*Node, error) {
 	if n == nil {
 		return nil, nil
 	}
@@ -97,14 +117,14 @@ func (n *Node) FindRange(ranges map[int]Range) ([]*Node, error) {
 	r, ok := ranges[n.axis]
 	// search subtree if we're not restricting this axis, or if restrictions match.
 	if !ok || r.Min < n.Coordinates[n.axis] {
-		if left, err := n.leftChild.FindRange(ranges); err == nil {
+		if left, err := n.leftChild.findRange(ranges); err == nil {
 			result = append(result, left...)
 		} else {
 			return result, err
 		}
 	}
 	if !ok || r.Max >= n.Coordinates[n.axis] {
-		if right, err := n.rightChild.FindRange(ranges); err == nil {
+		if right, err := n.rightChild.findRange(ranges); err == nil {
 			result = append(result, right...)
 		} else {
 			return result, err

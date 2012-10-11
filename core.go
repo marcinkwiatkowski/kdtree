@@ -23,21 +23,19 @@ package kdtree
 
 import (
 	"errors"
-	"sync"
 	"strconv"
 )
 
 /***** Basic Tree Operations *****/
 
-// The tree root, and every child subtree and node.
+// Tree node, can be the parent for a subtree.
 type Node struct {
-	// Mutex must be used to syncronize multithreaded ops once node is added to a tree.
-	Mutex sync.Mutex
-	Data  *interface{}
+	Data *interface{}
 
 	// Axis for plane of bisection for this node, determined when added to a tree.
 	axis        int
 	Coordinates []float64
+	tree        *Tree // Tree this node belongs to, avoids reverse scan for root node.
 	parent      *Node // Parent == nil is a tree root.
 	leftChild   *Node // Nodes < Location on this axis.
 	rightChild  *Node // Nodes >= Location on this axis.
@@ -67,7 +65,7 @@ func (n *Node) String() string {
 }
 
 // Adds new Node or subtree to existing (sub)tree. Returns an error if the Node can't be added to the tree.
-func (n *Node) Add(newnode *Node) error {
+func (n *Node) add(newnode *Node) error {
 	// Check dimensions of new node at tree root.
 	if n.parent == nil {
 		if len(n.Coordinates) != len(newnode.Coordinates) {
@@ -77,57 +75,41 @@ func (n *Node) Add(newnode *Node) error {
 
 	// erase any existing parent to node being added
 	if newnode.parent != nil {
-		newnode.Mutex.Lock()
 		newnode.parent = nil
-		newnode.Mutex.Unlock()
 	}
 
 	// re-add any children first
 	if newnode.leftChild != nil {
-		if err := n.Add(newnode.leftChild); err != nil {
+		if err := n.add(newnode.leftChild); err != nil {
 			return err
 		}
-		newnode.Mutex.Lock()
 		newnode.leftChild = nil
-		newnode.Mutex.Unlock()
 	}
 	if newnode.rightChild != nil {
-		if err := n.Add(newnode.rightChild); err != nil {
+		if err := n.add(newnode.rightChild); err != nil {
 			return err
 		}
-		newnode.Mutex.Lock()
 		newnode.rightChild = nil
-		newnode.Mutex.Unlock()
 	}
 
 	// now place this node
 	if newnode.Coordinates[n.axis] < n.Coordinates[n.axis] {
 		if n.leftChild == nil {
-			newnode.Mutex.Lock()
-			defer newnode.Mutex.Unlock()
-			n.Mutex.Lock()
-			defer n.Mutex.Unlock()
-
 			newnode.axis = (n.axis + 1) % len(n.Coordinates)
 			n.leftChild = newnode
 			newnode.parent = n
 			return nil
 		} else {
-			n.leftChild.Add(newnode)
+			n.leftChild.add(newnode)
 		}
 	} else {
 		if n.rightChild == nil {
-			newnode.Mutex.Lock()
-			defer newnode.Mutex.Unlock()
-			n.Mutex.Lock()
-			defer n.Mutex.Unlock()
-
 			newnode.axis = (n.axis + 1) % len(n.Coordinates)
 			n.rightChild = newnode
 			newnode.parent = n
 			return nil
 		} else {
-			n.rightChild.Add(newnode)
+			n.rightChild.add(newnode)
 		}
 	}
 
@@ -136,17 +118,13 @@ func (n *Node) Add(newnode *Node) error {
 
 // Removes node from the tree it belongs to, adjusting other nodes as necessary.
 // If this operation creates a new tree root, it is returned, otherwise nil.
-func (n *Node) Remove() *Node {
-	n.Mutex.Lock()
-	defer n.Mutex.Unlock()
-
+func (n *Node) remove() *Node {
 	if n.parent != nil {
 		if !(n.parent.leftChild == n || n.parent.rightChild == n) {
 			panic(n.String() + " to be removed not attached to its parent: " + n.parent.String())
 		}
 		parent := n.parent
 		// remove references to this node from the parent
-		parent.Mutex.Lock()
 		if parent.leftChild == n {
 			parent.leftChild = nil
 		}
@@ -154,18 +132,17 @@ func (n *Node) Remove() *Node {
 		if parent.rightChild == n {
 			parent.rightChild = nil
 		}
-		n.parent.Mutex.Unlock()
 		// remove reference to parent
 		n.parent = nil
 
 		// re-add any children to the previous level
 		if n.leftChild != nil {
-			if err := parent.Add(n.leftChild); err != nil {
+			if err := parent.add(n.leftChild); err != nil {
 				panic("Unexpected error while removing node: " + err.Error())
 			}
 		}
 		if n.rightChild != nil {
-			if err := parent.Add(n.rightChild); err != nil {
+			if err := parent.add(n.rightChild); err != nil {
 				panic("Unexpected error while removing node: " + err.Error())
 			}
 		}
@@ -177,39 +154,34 @@ func (n *Node) Remove() *Node {
 		switch {
 		// arbitrarily rebalance so n.rightChild is the new tree root
 		case n.leftChild != nil && n.rightChild != nil:
-			n.rightChild.Mutex.Lock()
 			n.rightChild.parent = nil
-			n.rightChild.Mutex.Unlock()
-			if err := n.rightChild.Add(n.leftChild); err != nil {
+			if err := n.rightChild.add(n.leftChild); err != nil {
 				// should never be an error on internal tree ops
 				panic("Unexpected error adding subtree to new root: " + err.Error())
 			}
 			return n.rightChild
 		case n.leftChild != nil: // implied n.rightChild == nil
-			n.leftChild.Mutex.Lock()
-			defer n.leftChild.Mutex.Unlock()
 			n.leftChild.parent = nil // new tree root
 			return n.leftChild
 		case n.rightChild != nil: // implied n.leftChild == nil
-			n.rightChild.Mutex.Lock()
-			defer n.rightChild.Mutex.Unlock()
 			n.rightChild.parent = nil // new tree root
 			return n.rightChild
 		}
 		// case: n.leftChild == nil && n.rightChild == nil means empty tree
 		return nil
 	}
+	n.tree = nil
 	return nil
 }
 
 // Performs a left depth first tree traversal, running function f on every Node found.
-func (n *Node) Traverse(f func(*Node)) {
+func (n *Node) traverse(f func(*Node)) {
 	if n != nil {
 		if n.leftChild != nil {
-			n.leftChild.Traverse(f)
+			n.leftChild.traverse(f)
 		}
 		if n.rightChild != nil {
-			n.rightChild.Traverse(f)
+			n.rightChild.traverse(f)
 		}
 		f(n)
 	}

@@ -16,9 +16,9 @@
 package kdtree
 
 import (
-	"testing"
 	"math/rand"
 	"strconv"
+	"testing"
 	"time"
 )
 
@@ -53,7 +53,7 @@ func genlist(dimensions, size int) []*Node {
 func TestBuildTree(t *testing.T) {
 	// test size: 6 dimensions == 2 * normal 3d, 100000 nodes == "5 9s" of accuracy.
 	nl := genlist(6, 100000)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	if tree == nil {
 		t.Fatal("Tree not generated!")
 	}
@@ -79,31 +79,40 @@ func BenchmarkBuildTree(b *testing.B) {
 	nl := genlist(6, b.N)
 	b.StartTimer()
 
-	BuildTree(nl, 0, nil)
+	BuildTree(nl)
 }
 
 func TestFindRoot(t *testing.T) {
 	nl := genlist(6, 100000)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	for _, n := range nl {
-		root := n.Root()
-		if root != tree {
-			t.Fatal("Found incorrect root " + root.String() + " from node " + n.String())
-		}
+		go func() {
+			root := n.root()
+			if root != tree.Root {
+				defer t.Fatal("Found incorrect root " + root.String() + " from node " + n.String())
+			}
+		}()
 	}
 }
 
 func TestAddNodes(t *testing.T) {
 	nl := genlist(6, 100000)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	// insert 1000 nodes
+	donechan := make(chan bool, 100)
 	for i := 0; i < 1000; i++ {
 		n := NewNode(rndCoords(6))
 		nl = append(nl, n)
-		err := tree.Add(n)
-		if err != nil {
-			t.Error("Failed to add node " + n.String() + ": " + err.Error())
-		}
+		go func() {
+			if err := tree.Add(n); err != nil {
+				defer t.Fatal("Failed to add node " + n.String() + ": " + err.Error())
+			}
+			donechan <- true
+		}()
+	}
+	// wait for goroutines to finish
+	for i := 0; i < 1000; i++ {
+		<-donechan
 	}
 	if err := tree.Validate(); err != nil {
 		t.Fatal("Tree is not valid after adding nodes: " + err.Error())
@@ -121,34 +130,42 @@ func TestAddNodes(t *testing.T) {
 }
 
 func BenchmarkAddNodes(b *testing.B) {
-	tree := NewNode(rndCoords(6))
+	tree := new(Tree)
 	for i := 0; i < b.N/2; i++ {
-		tree.Add(NewNode(rndCoords(6)))
+		go tree.Add(NewNode(rndCoords(6)))
 	}
 }
 
 func BenchmarkFind(b *testing.B) {
 	b.StopTimer()
 	nl := genlist(6, b.N)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
+	donechan := make(chan bool, 100)
 	b.StartTimer()
 	for k, n := range nl {
-		if search, err := tree.Find(n.Coordinates); err == nil && search == nil {
-			b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
-		} else if search != n {
-			b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
-		} else if err != nil {
-			b.Fatal("Error while searching tree:", err)
-		}
+		go func() {
+			if search, err := tree.Find(n.Coordinates); err == nil && search == nil {
+				defer b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
+			} else if search != n {
+				defer b.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + ", found " + search.String())
+			} else if err != nil {
+				defer b.Fatal("Error while searching tree:", err)
+			}
+			donechan <- true
+		}()
+	}
+	// wait for goroutines to finish
+	for _, _ = range nl {
+		<-donechan
 	}
 }
 
 func TestAddSubtree(t *testing.T) {
 	nl1 := genlist(6, 75000)
 	nl2 := genlist(6, 25000)
-	tree1 := BuildTree(nl1, 0, nil)
-	tree2 := BuildTree(nl2, 0, nil)
-	tree1.Add(tree2)
+	tree1 := BuildTree(nl1)
+	tree2 := BuildTree(nl2)
+	tree1.Add(tree2.Root)
 	for k, n := range nl1 {
 		if search, err := tree1.Find(n.Coordinates); err == nil && search == nil {
 			t.Fatal(strconv.FormatInt(int64(k), 10) + ": " + n.String() + " not found!")
@@ -172,14 +189,12 @@ func TestAddSubtree(t *testing.T) {
 func TestRemoveNodes(t *testing.T) {
 	// order of magnitude smaller, because removals are an order of magnitude slower.
 	nl := genlist(6, 10000)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	// remove nodes from end of nodelist
 	for i := len(nl) - 500; i < len(nl); i++ {
 		size := tree.Size()
-		result := nl[i].Remove()
-		if result != nil { // new root
-			t.Log("Removed tree root, new tree root is " + result.String())
-			tree = result
+		if err := tree.Remove(nl[i]); err != nil {
+			t.Fatal("Failed to remove node " + nl[i].String() + ", " + err.Error())
 		}
 		newsize := tree.Size()
 		diff := size - newsize
@@ -219,28 +234,39 @@ func TestRemoveNodes(t *testing.T) {
 func BenchmarkRemoveNodes(b *testing.B) {
 	b.StopTimer()
 	nl := genlist(6, b.N*2)
-	BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
+	donechan := make(chan bool)
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		nl[i].Remove()
+		go func() {
+			tree.Remove(nl[i])
+			donechan <- true
+		}()
+	}
+	// wait for goroutines to finish
+	for i := 0; i < b.N; i++ {
+		<-donechan
 	}
 }
 
 func TestBalance(t *testing.T) {
 	// first, generate an unbalanced tree on purpose
-	tree := NewNode([]float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0})
+	tree := new(Tree)
+	tree.Add(NewNode([]float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}))
 	for i := 0; i < 100000; i++ {
 		// Because the tree root is (0.0...), and math.rand generates numbers in [0.0,1.0), these nodes
 		// will all fall to the right of the root.
 		n := NewNode(rndCoords(6))
-		tree.Add(n)
+		if err := tree.Add(n); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if tree.leftChild.Size() > 0 {
+	if tree.Root.leftChild.size() > 0 {
 		t.Fatal("Left branch should always be empty after unbalanced generation.")
 	}
 	start_depth := tree.Depth()
-	tree = tree.Balance()
+	tree.Balance()
 	end_depth := tree.Depth()
 	depth_diff := start_depth - end_depth
 
@@ -248,8 +274,8 @@ func TestBalance(t *testing.T) {
 	if depth_diff <= 0 {
 		t.Fatal("New tree has a depth >= old tree.")
 	}
-	left_size := tree.leftChild.Size()
-	right_size := tree.rightChild.Size()
+	left_size := tree.Root.leftChild.size()
+	right_size := tree.Root.rightChild.size()
 	size_diff := left_size - right_size
 	if size_diff > 10 || size_diff < -10 {
 		t.Error("Left and right branches have a node difference > 10 (" + strconv.FormatInt(int64(size_diff), 10))
@@ -259,55 +285,63 @@ func TestBalance(t *testing.T) {
 func BenchmarkBalance(b *testing.B) {
 	b.StopTimer()
 	nl := genlist(6, b.N)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	b.StartTimer()
 
 	tree.Balance()
 }
 
 func TestFindRange(t *testing.T) {
-	nl := genlist(6, 100000)
-	tree := BuildTree(nl, 0, nil)
+	nl := genlist(6, 20000)
+	tree := BuildTree(nl)
+	donechan := make(chan bool)
 
 	for i := 0; i < 100; i++ {
-		ranges := make(map[int]Range)
-		for axis := rand.Intn(6); len(ranges) < rand.Intn(6)+1; axis = rand.Intn(6) {
-			r := Range{rand.Float64(), rand.Float64()}
-			if r.Min > r.Max {
-				r.Min, r.Max = r.Max, r.Min
+		go func() {
+			ranges := make(map[int]Range)
+			for axis := rand.Intn(6); len(ranges) < rand.Intn(6)+1; axis = rand.Intn(6) {
+				r := Range{rand.Float64(), rand.Float64()}
+				if r.Min > r.Max {
+					r.Min, r.Max = r.Max, r.Min
+				}
+				ranges[axis] = r
 			}
-			ranges[axis] = r
-		}
-		results1, err := tree.FindRange(ranges)
-		if err != nil {
-			t.Fatal(err)
-		}
-		snl := SortableNodeList{0, nl}
-		results2, err := snl.findrange(ranges)
-		if err != nil {
-			t.Fatal(err)
-		}
+			results1, err := tree.FindRange(ranges)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snl := sortableNodeList{0, nl}
+			results2, err := snl.findrange(ranges)
+			if err != nil {
+				defer t.Fatal(err)
+			}
 
-		if len(results1) != len(results2) {
-			t.Fatal("Tree FindRange returned", len(results1), "nodes, list findrange returned", len(results2))
-		}
-		for _, n := range results1 {
-			if _, ok := find_nl(results2, n); !ok {
-				t.Fatal("Node from tree results not found in results list:", n)
+			if len(results1) != len(results2) {
+				defer t.Fatal("Tree FindRange returned", len(results1), "nodes, list findrange returned", len(results2))
 			}
-		}
-		for _, n := range results2 {
-			if _, ok := find_nl(results1, n); !ok {
-				t.Fatal("Node from results list not found in tree results:", n)
+			for _, n := range results1 {
+				if _, ok := find_nl(results2, n); !ok {
+					defer t.Fatal("Node from tree results not found in results list:", n)
+				}
 			}
-		}
+			for _, n := range results2 {
+				if _, ok := find_nl(results1, n); !ok {
+					defer t.Fatal("Node from results list not found in tree results:", n)
+				}
+			}
+			donechan <- true
+		}()
+	}
+	// wait for goroutines to complete	
+	for i := 0; i < 100; i++ {
+		<-donechan
 	}
 }
 
 func BenchmarkFindRange(b *testing.B) {
 	b.StopTimer()
 	nl := genlist(6, b.N*2)
-	tree := BuildTree(nl, 0, nil)
+	tree := BuildTree(nl)
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {

@@ -19,15 +19,76 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"sync"
 )
 
+/***** Tree Object *****/
+// Tree is needed for locking, to prevent syncronization issues.
+type Tree struct {
+	Mutex sync.RWMutex
+
+	Root *Node
+}
+
+/***** Tree Functions *****/
+// These functions wrap the private Node functions in lock operations so that
+// they're thread-safe.
+
+// Adds new Node to existing Tree. Returns an error if the Node can't be added to the tree.
+func (t *Tree) Add(newnode *Node) error {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	if t.Root == nil {
+		t.Root = newnode
+		return nil
+	}
+	return t.Root.add(newnode)
+}
+
+// Removes node from the Tree, rebalancoing other nodes as necessary.
+// Returns an error if Node isn't a member of this Tree.
+func (t *Tree) Remove(n *Node) error {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	if n.tree != t {
+		return errors.New("Node not a member of tree.")
+	}
+	if newroot := n.remove(); newroot != nil {
+		t.Root = newroot
+	}
+
+	return nil
+}
+
+// Performs a left depth first tree traversal, running function f on every Node found.
+func (t *Tree) Traverse(f func(*Node)) {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	f(t.Root)
+}
+
 /***** Tree Management Functions *****/
+
+// Builds a new tree from a list of nodes. This is destructive, and
+// will remove any existing tree membership from nodes passed to it.
+func BuildTree(nodes []*Node) *Tree {
+	tree := new(Tree)
+	tree.Mutex.Lock()
+	defer tree.Mutex.Unlock()
+	tree.Root = buildRootNode(nodes, 0, nil)
+	f := func(n *Node) {
+		n.tree = tree
+	}
+	tree.Root.traverse(f)
+
+	return tree
+}
 
 // Builds a tree from a list of nodes. Returns the root Node of the new tree.
 // This is destructive, and will break any existing tree these nodes may be a member of.
 // This is intended to be used to build an new tree, or as part of a tree Balance.
 // This is a recursive function, you should always call it with depth = 0, parent = nil.
-func BuildTree(nodes []*Node, depth int, parent *Node) *Node {
+func buildRootNode(nodes []*Node, depth int, parent *Node) *Node {
 	var root *Node
 	// special case handling first
 	switch len(nodes) {
@@ -36,8 +97,6 @@ func BuildTree(nodes []*Node, depth int, parent *Node) *Node {
 	case 1:
 		dimensions := len(nodes[0].Coordinates)
 		root = nodes[0]
-		root.Mutex.Lock()
-		defer root.Mutex.Unlock()
 
 		root.axis = depth % dimensions
 		root.parent = parent
@@ -47,7 +106,7 @@ func BuildTree(nodes []*Node, depth int, parent *Node) *Node {
 		median := (len(nodes) / 2) - 1 // -1 so that it's a slice index
 		dimensions := len(nodes[0].Coordinates)
 
-		snl := new(SortableNodeList)
+		snl := new(sortableNodeList)
 		snl.Axis = depth % dimensions
 		snl.Nodes = make([]*Node, len(nodes))
 		copy(snl.Nodes, nodes)
@@ -55,22 +114,28 @@ func BuildTree(nodes []*Node, depth int, parent *Node) *Node {
 
 		root = snl.Nodes[median]
 
-		root.Mutex.Lock()
-		defer root.Mutex.Unlock()
 		root.axis = snl.Axis
 		root.parent = parent
-		root.leftChild = BuildTree(snl.Nodes[0:median], depth+1, root)
-		root.rightChild = BuildTree(snl.Nodes[median+1:], depth+1, root)
+		root.leftChild = buildRootNode(snl.Nodes[0:median], depth+1, root)
+		root.rightChild = buildRootNode(snl.Nodes[median+1:], depth+1, root)
 	}
 
 	return root
 }
 
-// Balances a tree by re-inserting all nodes into a new tree.
-// Returns the root Node for the new tree.
-func (n *Node) Balance() *Node {
-	nodelist := n.NodeList()
-	return BuildTree(nodelist, 0, nil)
+// Rebalances a whole Tree.
+func (t *Tree) Balance() {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	nodelist := t.Root.nodeList()
+	t.Root = buildRootNode(nodelist, 0, nil)
+}
+
+// Checks that Tree is a valid kdtree. Returns an error of there are problems.
+func (t *Tree) Validate() error {
+	t.Mutex.RLock()
+	t.Mutex.RUnlock()
+	return t.Root.validate()
 }
 
 // Checks that the (sub)tree below this node is valid:
@@ -80,7 +145,7 @@ func (n *Node) Balance() *Node {
 // - All children have the correct parent.
 //
 // Returns nil if valid, or an error describing something broken in the tree.
-func (n *Node) Validate() error {
+func (n *Node) validate() error {
 	var err error = nil
 	if n.leftChild != nil {
 		f := func(check *Node) {
@@ -88,7 +153,7 @@ func (n *Node) Validate() error {
 				err = errors.New(check.String() + " is right of " + n.String() + " on axis " + strconv.FormatInt(int64(n.axis), 10))
 			}
 		}
-		n.leftChild.Traverse(f)
+		n.leftChild.traverse(f)
 		// check all subtrees / dimensions
 		if err != nil {
 			return err
@@ -105,7 +170,7 @@ func (n *Node) Validate() error {
 		}
 
 		// finally check all subtrees
-		if err = n.leftChild.Validate(); err != nil {
+		if err = n.leftChild.validate(); err != nil {
 			return err
 		}
 	}
@@ -118,7 +183,7 @@ func (n *Node) Validate() error {
 				err = errors.New(check.String() + " is left of " + n.String() + " on axis " + strconv.FormatInt(int64(n.axis), 10))
 			}
 		}
-		n.rightChild.Traverse(f)
+		n.rightChild.traverse(f)
 		// check all subtrees / dimensions
 		if err != nil {
 			return err
@@ -135,27 +200,41 @@ func (n *Node) Validate() error {
 		}
 
 		// finally check all subtrees
-		if err = n.rightChild.Validate(); err != nil {
+		if err = n.rightChild.validate(); err != nil {
 			return err
 		}
 	}
 	return err
 }
 
+// Returns Depth of the deepest branch of this Tree.
+func (t *Tree) Depth() int {
+	t.Mutex.RLock()
+	defer t.Mutex.RUnlock()
+	return t.Root.depth()
+}
+
 // Returns depth of the deepest branch of this (sub)tree.
-func (n *Node) Depth() int {
+func (n *Node) depth() int {
 	if n == nil {
 		return 0
 	}
-	left_depth := n.leftChild.Depth() + 1
-	right_depth := n.rightChild.Depth() + 1
+	left_depth := n.leftChild.depth() + 1
+	right_depth := n.rightChild.depth() + 1
 	if left_depth > right_depth {
 		return left_depth
 	}
 	return right_depth
 }
 
+// Returns number of nodes in the Tree.
+func (t *Tree) Size() int {
+	t.Mutex.RLock()
+	defer t.Mutex.RUnlock()
+	return t.Root.size()
+}
+
 // Returns number of nodes in this (sub)tree.
-func (n *Node) Size() int {
-	return len(n.NodeList())
+func (n *Node) size() int {
+	return len(n.nodeList())
 }

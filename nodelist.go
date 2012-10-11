@@ -22,39 +22,47 @@ import (
 /***** Node list management functions *****/
 
 // Returns a slice of all distinct nodes in the tree. This is done by a tree traversal,
-// and will be equally as slow.
-func (n *Node) NodeList() []*Node {
+// and will be equally slow.
+func (t *Tree) NodeList() []*Node {
+	t.Mutex.RLock()
+	defer t.Mutex.RUnlock()
+	return t.Root.nodeList()
+}
+
+// Returns a slice of all distinct nodes in the tree. This is done by a tree traversal,
+// and will be equally slow.
+func (n *Node) nodeList() []*Node {
 	nodelist := make([]*Node, 0, 100)
 	f := func(n *Node) {
 		nodelist = append(nodelist, n)
 	}
-	n.Traverse(f)
+	n.traverse(f)
 
 	return nodelist
 }
 
 // Wrapper for a slice of nodes implementing sort.Interface for different dimensional axes.
-type SortableNodeList struct {
+type sortableNodeList struct {
 	// dimension axis to sort on
 	Axis  int
 	Nodes []*Node
 }
 
-func (snl *SortableNodeList) Len() int {
+func (snl *sortableNodeList) Len() int {
 	return len(snl.Nodes)
 }
 
-func (snl *SortableNodeList) Less(i, j int) bool {
+func (snl *sortableNodeList) Less(i, j int) bool {
 	return snl.Nodes[i].Coordinates[snl.Axis] < snl.Nodes[j].Coordinates[snl.Axis]
 }
 
-func (snl *SortableNodeList) Swap(i, j int) {
+func (snl *sortableNodeList) Swap(i, j int) {
 	snl.Nodes[i], snl.Nodes[j] = snl.Nodes[j], snl.Nodes[i]
 }
 
 // Perform the same search as Node.FindRange() on a list of nodes, used in
 // unit testing. Axis is ignored in this function.
-func (snl *SortableNodeList) findrange(ranges map[int]Range) ([]*Node, error) {
+func (snl *sortableNodeList) findrange(ranges map[int]Range) ([]*Node, error) {
 	result := make([]*Node, 0, len(snl.Nodes))
 	for _, n := range snl.Nodes {
 		add := true
