@@ -30,7 +30,7 @@ import (
 
 // Tree node, can be the parent for a subtree.
 type Node struct {
-	Data *interface{}
+	Index int // index from original data structure
 
 	// Axis for plane of bisection for this node, determined when added to a tree.
 	axis        int
