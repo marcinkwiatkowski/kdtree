@@ -16,9 +16,7 @@
 package kdtree
 
 import (
-	"errors"
 	"sort"
-	"strconv"
 	"sync"
 )
 
@@ -34,31 +32,6 @@ type Tree struct {
 // These functions wrap the private Node functions in lock operations so that
 // they're thread-safe.
 
-// Adds new Node to existing Tree. Returns an error if the Node can't be added to the tree.
-func (t *Tree) Add(newnode *Node) error {
-	t.Mutex.Lock()
-	defer t.Mutex.Unlock()
-	if t.Root == nil {
-		t.Root = newnode
-		return nil
-	}
-	return t.Root.add(newnode)
-}
-
-// Removes node from the Tree, rebalancoing other nodes as necessary.
-// Returns an error if Node isn't a member of this Tree.
-func (t *Tree) Remove(n *Node) error {
-	t.Mutex.Lock()
-	defer t.Mutex.Unlock()
-	if n.tree != t {
-		return errors.New("Node not a member of tree.")
-	}
-	if newroot := n.remove(); newroot != nil {
-		t.Root = newroot
-	}
-
-	return nil
-}
 
 // Performs a left depth first tree traversal, running function f on every Node found.
 func (t *Tree) Traverse(f func(*Node)) {
@@ -76,10 +49,10 @@ func BuildTree(nodes []*Node) *Tree {
 	tree.Mutex.Lock()
 	defer tree.Mutex.Unlock()
 	tree.Root = buildRootNode(nodes, 0, nil)
-	f := func(n *Node) {
-		n.tree = tree
-	}
-	tree.Root.traverse(f)
+//	f := func(n *Node) {
+//		n.tree = tree
+//	}
+//	tree.Root.traverse(f)
 
 	return tree
 }
@@ -99,7 +72,6 @@ func buildRootNode(nodes []*Node, depth int, parent *Node) *Node {
 		root = nodes[0]
 
 		root.axis = depth % dimensions
-		root.parent = parent
 		root.leftChild = nil
 		root.rightChild = nil
 	default:
@@ -115,7 +87,6 @@ func buildRootNode(nodes []*Node, depth int, parent *Node) *Node {
 		root = snl.Nodes[median]
 
 		root.axis = snl.Axis
-		root.parent = parent
 		root.leftChild = buildRootNode(snl.Nodes[0:median], depth+1, root)
 		root.rightChild = buildRootNode(snl.Nodes[median+1:], depth+1, root)
 	}
@@ -131,81 +102,6 @@ func (t *Tree) Balance() {
 	t.Root = buildRootNode(nodelist, 0, nil)
 }
 
-// Checks that Tree is a valid kdtree. Returns an error of there are problems.
-func (t *Tree) Validate() error {
-	t.Mutex.RLock()
-	t.Mutex.RUnlock()
-	return t.Root.validate()
-}
-
-// Checks that the (sub)tree below this node is valid:
-// - All children to the left of it are < it on the axis.
-// - All children to the right of it are >= it on the axis.
-// - All child axes are their parent's axis + 1 (mod # dimensions).
-// - All children have the correct parent.
-//
-// Returns nil if valid, or an error describing something broken in the tree.
-func (n *Node) validate() error {
-	var err error = nil
-	if n.leftChild != nil {
-		f := func(check *Node) {
-			if check.Coordinates[n.axis] >= n.Coordinates[n.axis] {
-				err = errors.New(check.String() + " is right of " + n.String() + " on axis " + strconv.FormatInt(int64(n.axis), 10))
-			}
-		}
-		n.leftChild.traverse(f)
-		// check all subtrees / dimensions
-		if err != nil {
-			return err
-		}
-		// make sure axes are sensible
-		if expected := (n.axis + 1) % len(n.Coordinates); n.leftChild.axis != expected {
-			return errors.New("Child axis " + strconv.FormatInt(int64(n.leftChild.axis), 10) + " isn't parent axis + 1 (" + strconv.FormatInt(int64(expected), 10))
-		}
-		// make sure parental relationships are correct
-		if n.leftChild.parent == nil {
-			return errors.New("Child " + n.leftChild.String() + " is missing parent " + n.String())
-		} else if n.leftChild.parent != n {
-			return errors.New("Child " + n.leftChild.String() + " is has incorrect parent " + n.leftChild.parent.String() + ", should be " + n.String())
-		}
-
-		// finally check all subtrees
-		if err = n.leftChild.validate(); err != nil {
-			return err
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if n.rightChild != nil {
-		f := func(check *Node) {
-			if check.Coordinates[n.axis] < n.Coordinates[n.axis] {
-				err = errors.New(check.String() + " is left of " + n.String() + " on axis " + strconv.FormatInt(int64(n.axis), 10))
-			}
-		}
-		n.rightChild.traverse(f)
-		// check all subtrees / dimensions
-		if err != nil {
-			return err
-		}
-		// make sure axes are sensible
-		if expected := (n.axis + 1) % len(n.Coordinates); n.rightChild.axis != expected {
-			return errors.New("Child axis " + strconv.FormatInt(int64(n.rightChild.axis), 10) + " isn't parent axis + 1 (" + strconv.FormatInt(int64(expected), 10))
-		}
-		// make sure parental relationships are correct
-		if n.rightChild.parent == nil {
-			return errors.New("Child " + n.rightChild.String() + " is missing parent " + n.String())
-		} else if n.rightChild.parent != n {
-			return errors.New("Child " + n.rightChild.String() + " is has incorrect parent " + n.rightChild.parent.String() + ", should be " + n.String())
-		}
-
-		// finally check all subtrees
-		if err = n.rightChild.validate(); err != nil {
-			return err
-		}
-	}
-	return err
-}
 
 // Returns Depth of the deepest branch of this Tree.
 func (t *Tree) Depth() int {

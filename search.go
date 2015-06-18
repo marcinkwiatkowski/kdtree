@@ -23,7 +23,7 @@ import (
 
 // Searches Tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
 // or (nil, error) if len(coords) != tree dimensions.
-func (t *Tree) Find(coords []float64) (*Node, error) {
+func (t *Tree) Find(coords [4]float64) (*Node, error) {
 	t.Mutex.RLock()
 	defer t.Mutex.RUnlock()
 	return t.Root.find(coords)
@@ -31,7 +31,7 @@ func (t *Tree) Find(coords []float64) (*Node, error) {
 
 // Searches (sub)tree for node at exact coords. Returns (nil, nil) if no node matching coords found,
 // or (nil, error) if len(coords) != tree dimensions.
-func (n *Node) find(coords []float64) (*Node, error) {
+func (n *Node) find(coords [4]float64) (*Node, error) {
 	if len(coords) != len(n.Coordinates) {
 		return nil, errors.New("Search coordinates have " + string(len(coords)) + " dimensions, tree has " + string(len(n.Coordinates)) + " dimensions.")
 	}
@@ -54,14 +54,6 @@ func (n *Node) find(coords []float64) (*Node, error) {
 	}
 	// implicit else
 	return n.rightChild.find(coords)
-}
-
-// Finds the root of the tree from an arbitrary node.
-func (n *Node) root() *Node {
-	if n.parent == nil {
-		return n
-	}
-	return n.parent.root()
 }
 
 // Range parameter, used to search the k-d tree.
@@ -135,7 +127,7 @@ func (n *Node) findRange(ranges map[int]Range) ([]*Node, error) {
 }
 
 // Tests equality of float slices, returns false if lengths or any values contained within differ.
-func equal_fl(a, b []float64) bool {
+func equal_fl(a, b [4]float64) bool {
 	if len(a) != len(b) {
 		return false
 	}
